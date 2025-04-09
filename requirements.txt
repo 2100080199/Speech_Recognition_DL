@@ -6,4 +6,5 @@ matplotlib
 sounddevice
 pydub
 os
-PyAudio
+pipwin
+pyaudio
