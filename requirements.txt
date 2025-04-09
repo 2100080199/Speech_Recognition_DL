@@ -1,10 +1,8 @@
 streamlit
+st-audiorec
 librosa
 tensorflow
 numpy
 matplotlib
-sounddevice
 pydub
-os
-pipwin
-pyaudio
+scikit-learn
