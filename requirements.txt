@@ -1,8 +1,7 @@
 streamlit
-st-audiorec
 librosa
-tensorflow
+torch
+torchaudio
 numpy
 matplotlib
-pydub
 scikit-learn
