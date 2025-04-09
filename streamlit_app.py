@@ -1,239 +1,118 @@
-import streamlit as st
-from st_audiorec import st_audiorec
-import numpy as np
 import librosa
-import librosa.display
-import matplotlib.pyplot as plt
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-import tempfile
-import os
-import pickle
-from sklearn.preprocessing import StandardScaler
-from pydub import AudioSegment
-from io import BytesIO
+import numpy as np
 
-# Constants
-SAMPLE_RATE = 22050
-DURATION = 4  # seconds
-N_MFCC = 13
-N_FFT = 2048
-HOP_LENGTH = 512
-N_SEGMENTS = 10
+def extract_features(file_path, n_mfcc=13):
+    # Load the audio file
+    audio, sr = librosa.load(file_path, sr=None)
 
-# Configuration
-st.set_page_config(page_title="Audio Authenticity Detector", layout="wide")
+    # Extract MFCC features
+    mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=n_mfcc)
 
-@st.cache_resource
-def load_model():
-    """Load or create the LSTM model"""
-    model_path = "audio_model.h5"
-    scaler_path = "scaler.pkl"
-    
-    if not os.path.exists(model_path):
-        # Create a dummy model if none exists
-        model = Sequential([
-            LSTM(128, return_sequences=True, input_shape=(N_SEGMENTS, N_MFCC)),
-            Dropout(0.3),
-            LSTM(64),
-            Dense(64, activation='relu'),
-            Dropout(0.3),
-            Dense(1, activation='sigmoid')
-        ])
-        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-        model.save(model_path)
-        
-        # Create dummy scaler
-        scaler = StandardScaler()
-        with open(scaler_path, 'wb') as f:
-            pickle.dump(scaler, f)
-            
-        st.warning("Using a dummy model. For accurate results, train with real data.")
-    
-    model = Sequential()
-    model.load_weights(model_path)
-    
-    try:
-        with open(scaler_path, 'rb') as f:
-            scaler = pickle.load(f)
-    except:
-        scaler = StandardScaler()
-    
-    return model, scaler
+    # You can also extract a Mel-spectrogram or any other feature
+    # mel_spectrogram = librosa.feature.melspectrogram(y=audio, sr=sr)
 
-def extract_mfcc(audio_path, n_mfcc=13, n_fft=2048, hop_length=512):
-    """Extract MFCC features from audio file"""
-    try:
-        y, sr = librosa.load(audio_path, sr=SAMPLE_RATE)
-        
-        # Pad or trim audio
-        if len(y) > SAMPLE_RATE * DURATION:
-            y = y[:SAMPLE_RATE * DURATION]
-        else:
-            padding = SAMPLE_RATE * DURATION - len(y)
-            y = np.pad(y, (0, padding))
-        
-        # Extract MFCCs
-        mfcc = librosa.feature.mfcc(
-            y=y, sr=sr, n_mfcc=n_mfcc, 
-            n_fft=n_fft, hop_length=hop_length
-        )
-        return mfcc.T
-    except Exception as e:
-        st.error(f"Error processing audio: {str(e)}")
-        return None
+    return mfcc.mean(axis=1)  # Average MFCC values across time frames
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
 
-def prepare_segments(mfcc_features, n_segments=10):
-    """Prepare segments for model prediction"""
-    segments = []
-    num_samples_per_segment = int(len(mfcc_features) / n_segments
+# Define a simple CNN model for audio classification
+class AudioClassifier(nn.Module):
+    def init(self, input_size):
+        super(AudioClassifier, self).init()
+        self.conv1 = nn.Conv1d(1, 64, kernel_size=3)
+        self.pool = nn.MaxPool1d(2)
+        self.fc1 = nn.Linear(64 * (input_size // 2 - 2), 128)
+        self.fc2 = nn.Linear(128, 2)  # 2 classes: real or fake
     
-    for s in range(n_segments):
-        start = int(num_samples_per_segment * s)
-        finish = int(start + num_samples_per_segment)
-        segments.append(mfcc_features[start:finish])
-    
-    return np.array(segments)
+    def forward(self, x):
+        x = self.pool(torch.relu(self.conv1(x)))
+        x = x.view(x.size(0), -1)
+        x = torch.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
-def plot_audio_features(y, sr):
-    """Plot waveform and MFCC features"""
-    fig, ax = plt.subplots(2, figsize=(10, 7))
-    
-    # Waveform
-    librosa.display.waveshow(y, sr=sr, ax=ax[0])
-    ax[0].set_title('Audio Waveform')
-    ax[0].set_xlabel('Time')
-    ax[0].set_ylabel('Amplitude')
-    
-    # MFCC
-    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=N_MFCC)
-    img = librosa.display.specshow(mfccs, x_axis='time', ax=ax[1])
-    fig.colorbar(img, ax=ax[1], format="%+2.f")
-    ax[1].set_title('MFCC Coefficients')
-    
-    st.pyplot(fig)
+# Example to load and preprocess the data
+def load_data(audio_files, labels):
+    features = []
+    for file in audio_files:
+        feature = extract_features(file)
+        features.append(feature)
+    return np.array(features), np.array(labels)
+
+# Example of training
+def train_model():
+    # Example dataset (You should replace with your real/fake audio dataset)
+    audio_files = ["audio1.wav", "audio2.wav"]  # Replace with actual paths
+    labels = [0, 1]  # 0 for real, 1 for fake (just an example)
+
+    X, y = load_data(audio_files, labels)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2)
+
+    # Convert to torch tensors
+    X_train = torch.tensor(X_train).float().unsqueeze(1)  # Add channel dimension
+    y_train = torch.tensor(y_train).long()
+    X_val = torch.tensor(X_val).float().unsqueeze(1)
+    y_val = torch.tensor(y_val).long()
+
+    # Initialize the model
+    model = AudioClassifier(input_size=X_train.shape[2])
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    # Training loop
+    for epoch in range(20):  # 20 epochs for example
+        model.train()
+        optimizer.zero_grad()
+        output = model(X_train)
+        loss = criterion(output, y_train)
+        loss.backward()
+        optimizer.step()
+
+        if epoch % 5 == 0:
+            print(f"Epoch {epoch}, Loss: {loss.item()}")
+
+    # Save the model after training
+    torch.save(model.state_dict(), "audio_classifier.pth")
+
+    return model
+
+import streamlit as st
+import torch
+from scipy.io.wavfile import write
+
+# Load the trained model
+model = AudioClassifier(input_size=13)  # Use the right input size
+model.load_state_dict(torch.load("audio_classifier.pth"))
+model.eval()
+
+def predict_audio(file):
+    # Extract features from the uploaded audio file
+    features = extract_features(file)
+    features = torch.tensor(features).float().unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
+
+    # Make prediction
+    with torch.no_grad():
+        output = model(features)
+        prediction = torch.argmax(output, dim=1)
+        return "Fake" if prediction == 1 else "Real"
 
 def main():
-    st.title("🎙️ Audio Authenticity Detector")
-    st.write("""
-    This system detects whether an audio recording is genuine or synthetic/synthetic
-    using MFCC features and LSTM neural networks.
-    """)
+    st.title("Real vs Fake Audio Classifier")
+    st.markdown("Upload an audio file to determine if it is real or fake.")
     
-    # Load model and scaler
-    model, scaler = load_model()
+    uploaded_file = st.file_uploader("Upload Audio File", type=["wav", "mp3"])
     
-    # Sidebar for settings
-    with st.sidebar:
-        st.header("Settings")
-        confidence_threshold = st.slider(
-            "Confidence Threshold", 
-            min_value=0.5, max_value=0.99, value=0.75, step=0.01
-        )
-        st.markdown("---")
-        st.info("""
-        **Instructions:**
-        1. Record or upload audio (4 seconds recommended)
-        2. Click 'Analyze Audio'
-        3. View results and visualizations
-        """)
-    
-    # Main content
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.header("Input Audio")
-        tab1, tab2 = st.tabs(["Record Audio", "Upload Audio"])
+    if uploaded_file is not None:
+        st.audio(uploaded_file, format="audio/wav")
         
-        with tab1:
-            audio_data = st_audiorec()
-            
-        with tab2:
-            uploaded_file = st.file_uploader(
-                "Choose an audio file", 
-                type=["wav", "mp3", "ogg", "flac"]
-            )
-            if uploaded_file:
-                if uploaded_file.name.endswith('.mp3'):
-                    audio = AudioSegment.from_mp3(uploaded_file)
-                    buffer = BytesIO()
-                    audio.export(buffer, format="wav")
-                    audio_data = buffer.getvalue()
-                else:
-                    audio_data = uploaded_file.getvalue()
-    
-    with col2:
-        st.header("Analysis Results")
+        # Save the uploaded file temporarily to predict on it
+        with open("temp_audio.wav", "wb") as f:
+            f.write(uploaded_file.getbuffer())
         
-        if audio_data is not None:
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-                tmp.write(audio_data)
-                tmp_path = tmp.name
-            
-            # Display audio player
-            st.audio(audio_data, format="audio/wav")
-            
-            if st.button("Analyze Audio", use_container_width=True):
-                with st.spinner("Processing audio..."):
-                    try:
-                        # Load and process audio
-                        y, sr = librosa.load(tmp_path, sr=SAMPLE_RATE)
-                        
-                        # Plot features
-                        plot_audio_features(y, sr)
-                        
-                        # Extract features
-                        mfcc_features = extract_mfcc(tmp_path)
-                        
-                        if mfcc_features is not None:
-                            # Prepare segments
-                            segments = prepare_segments(mfcc_features)
-                            
-                            # Scale features
-                            segments_scaled = scaler.transform(
-                                segments.reshape(-1, N_MFCC)
-                            ).reshape(segments.shape)
-                            
-                            # Make prediction
-                            prediction = model.predict(
-                                np.expand_dims(segments_scaled, axis=0)
-                            )[0][0]
-                            
-                            # Display results
-                            st.subheader("Detection Results")
-                            confidence = prediction if prediction > 0.5 else 1 - prediction
-                            
-                            if prediction > confidence_threshold:
-                                st.error(f"⚠️ Synthetic Audio Detected (confidence: {confidence:.2%})")
-                                st.progress(float(confidence))
-                                st.markdown("""
-                                **Characteristics detected:**
-                                - Potential signs of voice synthesis
-                                - Artificial speech patterns
-                                """)
-                            elif prediction > 0.5:
-                                st.warning(f"🤔 Possibly Synthetic (confidence: {confidence:.2%})")
-                                st.progress(float(confidence))
-                            else:
-                                st.success(f"✅ Genuine Audio (confidence: {confidence:.2%})")
-                                st.progress(float(confidence))
-                                st.markdown("""
-                                **Characteristics detected:**
-                                - Natural speech patterns
-                                - Consistent with human voice
-                                """)
-                            
-                            # Show raw prediction value
-                            with st.expander("Technical Details"):
-                                st.write(f"Raw prediction value: {prediction:.4f}")
-                                st.write(f"MFCC shape: {mfcc_features.shape}")
-                                st.write(f"Segments shape: {segments.shape}")
-                                
-                    except Exception as e:
-                        st.error(f"Error during analysis: {str(e)}")
-                    finally:
-                        os.unlink(tmp_path)
+        result = predict_audio("temp_audio.wav")
+        st.write(f"Prediction: {result}")
 
 if __name__ == "__main__":
     main()
